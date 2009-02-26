@@ -1,6 +1,6 @@
 ---
 name: IO-Async-Loop-Epoll
-version: 0.01
+version: 0.02
 author:
   - 'Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>'
 abstract: a Loop using an C<IO::Epoll> object
@@ -18,7 +18,7 @@ build_requires:
 provides:
   IO::Async::Loop::Epoll:
     file: lib/IO/Async/Loop/Epoll.pm
-    version: 0.01
+    version: 0.02
 generated_by: Module::Build version 0.280801
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html

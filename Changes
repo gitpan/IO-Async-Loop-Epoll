@@ -1,0 +1,10 @@
+Revision history for IO-Async-Loop-Epoll
+
+0.02    CHANGES:
+         * Use low-level IO::Epoll interface (epoll_ctl() etc..) instead of
+           high-level IO::Poll-alike object wrapper. Should be better
+           performance, and less buggy - doesn't depend on poor IO::Poll-like
+           emulation details.
+
+0.01    First version, released on an unsuspecting world.
+

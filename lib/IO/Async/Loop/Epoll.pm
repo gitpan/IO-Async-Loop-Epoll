@@ -1,22 +1,25 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008,2009 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Epoll;
 
 use strict;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
-use IO::Async::Loop::IO_Poll 0.17;
-use base qw( IO::Async::Loop::IO_Poll );
+use base qw( IO::Async::Loop );
 
 use IO::Async::SignalProxy; # just for signame2num
 
 use Carp;
 
-use IO::Epoll;
+use IO::Epoll qw(
+   epoll_create epoll_ctl epoll_pwait 
+   EPOLL_CTL_ADD EPOLL_CTL_MOD EPOLL_CTL_DEL
+   EPOLLIN EPOLLOUT EPOLLHUP
+);
 
 use POSIX qw( EINTR SIG_BLOCK SIG_UNBLOCK sigprocmask );
 
@@ -37,10 +40,9 @@ L<IO::Async::Loop::Epoll> - a Loop using an C<IO::Epoll> object
 
 =head1 DESCRIPTION
 
-This subclass of C<IO::Async::Loop::IO_Poll> uses an C<IO::Epoll> object 
-instead of a C<IO::Poll> to perform read-ready and write-ready tests so that
-the OZ<>(1) high-performance multiplexing of Linux's C<epoll_pwait(2)> syscall
-can be used.
+This subclass of C<IO::Async::Loop> uses C<IO::Epoll> to perform read-ready
+and write-ready tests so that the OZ<>(1) high-performance multiplexing of
+Linux's C<epoll_pwait(2)> syscall can be used.
 
 The C<epoll> Linux subsystem uses a registration system similar to the higher
 level C<IO::Poll> object wrapper, meaning that better performance can be
@@ -61,19 +63,9 @@ handle file IO and signals concurrently.
 
 =cut
 
-=head2 $loop = IO::Async::Loop::Epoll->new( %args )
+=head2 $loop = IO::Async::Loop::Epoll->new()
 
-This function returns a new instance of a C<IO::Async::Loop::Epoll> object. It
-takes the following named arguments:
-
-=over 8
-
-=item C<poll>
-
-The C<IO::Epoll> object to use for notification. Optional; if a value is not
-given, a new C<IO::Epoll> object will be constructed.
-
-=back
+This function returns a new instance of a C<IO::Async::Loop::Epoll> object.
 
 =cut
 
@@ -82,16 +74,13 @@ sub new
    my $class = shift;
    my ( %args ) = @_;
 
-   my $poll = delete $args{poll};
+   my $epoll = epoll_create(10); # Just made up 10. Kernel will readjust
+   defined $epoll or croak "Cannot create epoll handle - $!";
 
-   $poll ||= IO::Epoll->new();
+   my $self = $class->SUPER::__new( %args );
 
-   # Switch IO::Epoll object into Ppoll-compatible mode by accessing its
-   # signal mask. Don't need to actually change it, just calling this method
-   # is sufficient
-   $poll->sigmask;
-
-   my $self = $class->SUPER::new( %args, poll => $poll );
+   $self->{epoll} = $epoll;
+   $self->{sigmask} = POSIX::SigSet->new();
 
    $self->{restore_SIG} = {};
 
@@ -100,9 +89,9 @@ sub new
 
 =head1 METHODS
 
-As this is a subclass of L<IO::Async::Loop::IO_Poll>, all of its methods are
-inherited. Expect where noted below, all of the class's methods behave
-identically to C<IO::Async::Loop::IO_Poll>.
+As this is a subclass of L<IO::Async::Loop>, all of its methods are inherited.
+Expect where noted below, all of the class's methods behave identically to
+C<IO::Async::Loop>.
 
 =cut
 
@@ -132,15 +121,108 @@ sub loop_once
 
    $self->_adjust_timeout( \$timeout );
 
-   my $poll = $self->{poll};
+   my $msec = defined $timeout ? $timeout * 1000 : -1;
 
-   my $pollret = $poll->poll( $timeout );
-   return undef unless defined $pollret;
+   my $ret = epoll_pwait( $self->{epoll}, 20, $msec, $self->{sigmask} );
 
-   return 0 if $pollret == -1 and $! == EINTR; # Caught signal
-   return undef if $pollret == -1;             # Some other error
+   return 0 if !$ret and $! == EINTR; # Caught signal
+   return undef if !$ret;             # Some other error
 
-   return $self->post_poll();
+   my $count = 0;
+
+   foreach my $ev ( @$ret ) {
+      my ( $fd, $bits ) = @$ev;
+      my $notifier = $self->{fds}{$fd};
+
+      if( $bits & EPOLLIN  or $notifier->want_readready  and $bits & EPOLLHUP ) {
+         $notifier->on_read_ready;
+         $count++;
+      }
+
+      if( $bits & EPOLLOUT or $notifier->want_writeready and $bits & EPOLLHUP ) {
+         $notifier->on_write_ready;
+         $count++;
+      }
+   }
+
+   my $timequeue = $self->{timequeue};
+   $count += $timequeue->fire if $timequeue;
+
+   return $count;
+}
+
+sub _notifier_removed
+{
+   my $self = shift;
+   my ( $notifier ) = @_;
+
+   my $epoll = $self->{epoll};
+
+   my $read_fd;
+   
+   if( defined $notifier->read_handle ) {
+      $read_fd = $notifier->read_fileno;
+
+      delete $self->{fds}{$read_fd};
+      epoll_ctl( $epoll, EPOLL_CTL_DEL, $read_fd, 0 );
+   }
+
+   if( defined $notifier->write_handle and $notifier->write_fileno != $read_fd ) {
+      my $write_fd = $notifier->write_fileno;
+
+      delete $self->{fds}{$write_fd};
+      epoll_ctl( $epoll, EPOLL_CTL_DEL, $write_fd, 0 );
+   }
+}
+
+sub __notifier_want_rw
+{
+   my $self = shift;
+   my ( $notifier, $fd, $read, $write ) = @_;
+
+   my $epoll = $self->{epoll};
+
+   my $mask = ( $read ? EPOLLIN : 0 ) | ( $write ? EPOLLOUT : 0 );
+
+   if( exists $self->{fds}{$fd} ) {
+      epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask );
+   }
+   else {
+      $self->{fds}{$fd} = $notifier;
+      epoll_ctl( $epoll, EPOLL_CTL_ADD, $fd, $mask );
+   }
+}
+
+sub __notifier_want_readready
+{
+   my $self = shift;
+   my ( $notifier, $want ) = @_;
+
+   my $read_fd = $notifier->read_fileno;
+   defined $read_fd or return;
+
+   if( defined $notifier->write_fileno and $notifier->write_fileno == $read_fd ) {
+      return $self->__notifier_want_rw( $notifier, $read_fd, $want, $notifier->want_writeready );
+   }
+   else {
+      return $self->__notifier_want_rw( $notifier, $read_fd, $want, 0 );
+   }
+}
+
+sub __notifier_want_writeready
+{
+   my $self = shift;
+   my ( $notifier, $want ) = @_;
+
+   my $write_fd = $notifier->write_fileno;
+   defined $write_fd or return;
+
+   if( defined $notifier->read_fileno and $notifier->read_fileno == $write_fd ) {
+      return $self->__notifier_want_rw( $notifier, $write_fd, $notifier->want_readready, $want );
+   }
+   else {
+      return $self->__notifier_want_rw( $notifier, $write_fd, 0, $want );
+   }
 }
 
 # override
