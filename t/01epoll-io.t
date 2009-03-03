@@ -28,7 +28,7 @@ my $notifier = IO::Async::Notifier->new( handle => $S1,
 my $loop = IO::Async::Loop::Epoll->new();
 
 ok( defined $loop, '$loop defined' );
-is( ref $loop, "IO::Async::Loop::Epoll", 'ref $loop is IO::Async::Loop::Epoll' );
+isa_ok( $loop, "IO::Async::Loop::Epoll", '$loop isa IO::Async::Loop::Epoll' );
 
 $loop->add( $notifier );
 

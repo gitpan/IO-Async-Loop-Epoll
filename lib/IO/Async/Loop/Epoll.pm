@@ -7,7 +7,7 @@ package IO::Async::Loop::Epoll;
 
 use strict;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use base qw( IO::Async::Loop );
 
@@ -158,20 +158,16 @@ sub _notifier_removed
 
    my $epoll = $self->{epoll};
 
-   my $read_fd;
+   # Need to EPOLL_CTL_DEL the one-or-two FDs involved
+   my @fds = map { defined $_ and $_->fileno or () } 
+             $notifier->read_handle, $notifier->write_handle;
+
+   # If they're the same, remove one
+   pop @fds if @fds == 2 and $fds[0] == $fds[1];
    
-   if( defined $notifier->read_handle ) {
-      $read_fd = $notifier->read_fileno;
-
-      delete $self->{fds}{$read_fd};
-      epoll_ctl( $epoll, EPOLL_CTL_DEL, $read_fd, 0 );
-   }
-
-   if( defined $notifier->write_handle and $notifier->write_fileno != $read_fd ) {
-      my $write_fd = $notifier->write_fileno;
-
-      delete $self->{fds}{$write_fd};
-      epoll_ctl( $epoll, EPOLL_CTL_DEL, $write_fd, 0 );
+   foreach my $fd ( @fds ) {
+      delete $self->{fds}{$fd};
+      epoll_ctl( $epoll, EPOLL_CTL_DEL, $fd, 0 );
    }
 }
 

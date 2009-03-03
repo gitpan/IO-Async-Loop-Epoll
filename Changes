@@ -1,5 +1,8 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.03    BUGFIXES:
+         * Better handling of write-only Notifiers
+
 0.02    CHANGES:
          * Use low-level IO::Epoll interface (epoll_ctl() etc..) instead of
            high-level IO::Poll-alike object wrapper. Should be better
