@@ -7,11 +7,9 @@ package IO::Async::Loop::Epoll;
 
 use strict;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use base qw( IO::Async::Loop );
-
-use IO::Async::SignalProxy; # just for signame2num
 
 use Carp;
 
@@ -34,7 +32,11 @@ L<IO::Async::Loop::Epoll> - a Loop using an C<IO::Epoll> object
  my $loop = IO::Async::Loop::Epoll->new();
 
  $loop->add( ... );
- $loop->attach_signal( HUP => sub { ... } );
+
+ $loop->add( IO::Async::Signal->new(
+       name =< 'HUP',
+       on_receipt => sub { ... },
+ ) );
 
  $loop->loop_forever();
 
@@ -130,17 +132,20 @@ sub loop_once
 
    my $count = 0;
 
+   my $iowatches = $self->{iowatches};
+
    foreach my $ev ( @$ret ) {
       my ( $fd, $bits ) = @$ev;
-      my $notifier = $self->{fds}{$fd};
 
-      if( $bits & EPOLLIN  or $notifier->want_readready  and $bits & EPOLLHUP ) {
-         $notifier->on_read_ready;
+      my $watch = $iowatches->{$fd};
+
+      if( $bits & (EPOLLIN|EPOLLHUP) ) {
+         $watch->[1]->() if $watch->[1];
          $count++;
       }
 
-      if( $bits & EPOLLOUT or $notifier->want_writeready and $bits & EPOLLHUP ) {
-         $notifier->on_write_ready;
+      if( $bits & (EPOLLOUT|EPOLLHUP) ) {
+         $watch->[2]->() if $watch->[2];
          $count++;
       }
    }
@@ -151,90 +156,78 @@ sub loop_once
    return $count;
 }
 
-sub _notifier_removed
+# override
+sub watch_io
 {
    my $self = shift;
-   my ( $notifier ) = @_;
+   my %params = @_;
 
    my $epoll = $self->{epoll};
 
-   # Need to EPOLL_CTL_DEL the one-or-two FDs involved
-   my @fds = map { defined $_ and $_->fileno or () } 
-             $notifier->read_handle, $notifier->write_handle;
+   $self->__watch_io( %params );
 
-   # If they're the same, remove one
-   pop @fds if @fds == 2 and $fds[0] == $fds[1];
-   
-   foreach my $fd ( @fds ) {
-      delete $self->{fds}{$fd};
-      epoll_ctl( $epoll, EPOLL_CTL_DEL, $fd, 0 );
+   my $handle = $params{handle};
+   my $fd = $handle->fileno;
+
+   my $curmask = $self->{masks}->{$fd} || 0;
+
+   my $mask = $curmask;
+   $params{on_read_ready}  and $mask |= EPOLLIN;
+   $params{on_write_ready} and $mask |= EPOLLOUT;
+
+   if( !$curmask ) {
+      epoll_ctl( $epoll, EPOLL_CTL_ADD, $fd, $mask ) == 0
+         or carp "Cannot EPOLL_CTL_ADD($fd,$mask) - $!";
    }
+   elsif( $mask != $curmask ) {
+      epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
+         or carp "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
+   }
+
+   $self->{masks}->{$fd} = $mask;
 }
 
-sub __notifier_want_rw
+sub unwatch_io
 {
    my $self = shift;
-   my ( $notifier, $fd, $read, $write ) = @_;
+   my %params = @_;
+
+   $self->__unwatch_io( %params );
 
    my $epoll = $self->{epoll};
 
-   my $mask = ( $read ? EPOLLIN : 0 ) | ( $write ? EPOLLOUT : 0 );
+   my $handle = $params{handle};
+   my $fd = $handle->fileno;
 
-   if( exists $self->{fds}{$fd} ) {
-      epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask );
+   my $curmask = $self->{masks}->{$fd} or return;
+
+   my $mask = $curmask;
+   $params{on_read_ready}  and $mask &= ~EPOLLIN;
+   $params{on_write_ready} and $mask &= ~EPOLLOUT;
+
+   if( $mask ) {
+      epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
+         or carp "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
+      $self->{masks}->{$fd} = $mask;
    }
    else {
-      $self->{fds}{$fd} = $notifier;
-      epoll_ctl( $epoll, EPOLL_CTL_ADD, $fd, $mask );
-   }
-}
-
-sub __notifier_want_readready
-{
-   my $self = shift;
-   my ( $notifier, $want ) = @_;
-
-   my $read_fd = $notifier->read_fileno;
-   defined $read_fd or return;
-
-   if( defined $notifier->write_fileno and $notifier->write_fileno == $read_fd ) {
-      return $self->__notifier_want_rw( $notifier, $read_fd, $want, $notifier->want_writeready );
-   }
-   else {
-      return $self->__notifier_want_rw( $notifier, $read_fd, $want, 0 );
-   }
-}
-
-sub __notifier_want_writeready
-{
-   my $self = shift;
-   my ( $notifier, $want ) = @_;
-
-   my $write_fd = $notifier->write_fileno;
-   defined $write_fd or return;
-
-   if( defined $notifier->read_fileno and $notifier->read_fileno == $write_fd ) {
-      return $self->__notifier_want_rw( $notifier, $write_fd, $notifier->want_readready, $want );
-   }
-   else {
-      return $self->__notifier_want_rw( $notifier, $write_fd, 0, $want );
+      epoll_ctl( $epoll, EPOLL_CTL_DEL, $fd, 0 ) == 0
+         or carp "Cannot EPOLL_CTL_DEL($fd) - $!";
+      delete $self->{masks}->{$fd};
    }
 }
 
 # override
-sub attach_signal
+sub watch_signal
 {
    my $self = shift;
    my ( $signal, $code ) = @_;
 
    exists $SIG{$signal} or croak "Unrecognised signal name $signal";
 
-   # Don't allow anyone to trash an existing signal handler
-   !defined $SIG{$signal} or !ref $SIG{$signal} or croak "Cannot override signal handler for $signal";
-
    $self->{restore_SIG}->{$signal} = $SIG{$signal};
 
-   my $signum = IO::Async::SignalProxy::signame2num( $signal );
+   my $signum = $self->signame2num( $signal );
 
    sigprocmask( SIG_BLOCK, POSIX::SigSet->new( $signum ) );
 
@@ -242,7 +235,7 @@ sub attach_signal
 }
 
 # override
-sub detach_signal
+sub unwatch_signal
 {
    my $self = shift;
    my ( $signal ) = @_;
@@ -255,7 +248,7 @@ sub detach_signal
 
    delete $self->{restore_SIG}->{$signal};
    
-   my $signum = IO::Async::SignalProxy::signame2num( $signal );
+   my $signum = $self->signame2num( $signal );
 
    sigprocmask( SIG_UNBLOCK, POSIX::SigSet->new( $signum ) );
 }

@@ -1,5 +1,8 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.04    CHANGES:
+         * Updated for IO-Async 0.20
+
 0.03    BUGFIXES:
          * Better handling of write-only Notifiers
 

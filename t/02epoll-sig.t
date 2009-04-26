@@ -10,12 +10,12 @@ use IO::Async::Loop::Epoll;
 
 my $loop = IO::Async::Loop::Epoll->new();
 
-is( $SIG{HUP}, undef, '$SIG{HUP} default before attach' );
+is( $SIG{HUP}, undef, '$SIG{HUP} default before watch' );
 
 my $SIGHUP_count = 0;
-$loop->attach_signal( HUP => sub { $SIGHUP_count++ } );
+$loop->watch_signal( HUP => sub { $SIGHUP_count++ } );
 
-ok( defined $SIG{HUP}, '$SIG{HUP} defined after attach' );
+ok( defined $SIG{HUP}, '$SIG{HUP} defined after watch' );
 
 kill SIGHUP, $$;
 

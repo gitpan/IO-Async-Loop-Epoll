@@ -5,13 +5,16 @@ use strict;
 use Test::More tests => 10;
 use Test::Exception;
 
-use IO::Socket::UNIX;
 use IO::Async::Notifier;
 
 use IO::Async::Loop::Epoll;
 
-( my $S1, my $S2 ) = IO::Socket::UNIX->socketpair( AF_UNIX, SOCK_STREAM, PF_UNSPEC ) or
-   die "Cannot create socket pair - $!";
+my $loop = IO::Async::Loop::Epoll->new();
+
+ok( defined $loop, '$loop defined' );
+isa_ok( $loop, "IO::Async::Loop::Epoll", '$loop isa IO::Async::Loop::Epoll' );
+
+my ( $S1, $S2 ) = $loop->socketpair() or die "Cannot create socket pair - $!";
 
 # Need sockets in nonblocking mode
 $S1->blocking( 0 );
@@ -24,11 +27,6 @@ my $notifier = IO::Async::Notifier->new( handle => $S1,
    on_read_ready  => sub { $readready = 1 },
    on_write_ready => sub { $writeready = 1 },
 );
-
-my $loop = IO::Async::Loop::Epoll->new();
-
-ok( defined $loop, '$loop defined' );
-isa_ok( $loop, "IO::Async::Loop::Epoll", '$loop isa IO::Async::Loop::Epoll' );
 
 $loop->add( $notifier );
 
@@ -94,7 +92,7 @@ is( $notifier->get_loop, undef, '$notifier->__memberof_set is undef' );
 
 # HUP of pipe
 
-pipe( my ( $P1, $P2 ) ) or die "Cannot pipe() - $!";
+my ( $P1, $P2 ) = $loop->pipepair() or die "Cannot pipepair - $!";
 my ( $N1, $N2 ) = map {
    IO::Async::Notifier->new( read_handle => $_,
       on_read_ready   => sub { $readready = 1; },
