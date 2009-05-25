@@ -6,25 +6,11 @@ use Test::More tests => 8;
 
 use Time::HiRes qw( time );
 
-use IO::Async::Notifier;
-
 use IO::Async::Loop::Epoll;
 
 my $loop = IO::Async::Loop::Epoll->new();
 
 my ( $S1, $S2 ) = $loop->socketpair() or die "Cannot create socket pair - $!";
-
-# Need sockets in nonblocking mode
-$S1->blocking( 0 );
-$S2->blocking( 0 );
-
-my $readready = 0;
-my $writeready = 0;
-
-my $notifier = IO::Async::Notifier->new( handle => $S1,
-   on_read_ready  => sub { $readready = 1 },
-   on_write_ready => sub { $writeready = 1 },
-);
 
 # loop_once
 
@@ -41,7 +27,9 @@ if( $took > 2.5 ) {
          "This is not itself a bug, and may just be an indication of a busy testing machine" );
 }
 
-$loop->add( $notifier );
+$loop->watch_io( handle => $S1,
+   on_read_ready => sub { "DUMMY" },
+);
 
 $now = time;
 $loop->loop_once( 2 );
@@ -54,7 +42,9 @@ if( $took > 2.5 ) {
          "This is not itself a bug, and may just be an indication of a busy testing machine" );
 }
 
-$loop->remove( $notifier );
+$loop->unwatch_io( handle => $S1,
+   on_read_ready => 1,
+);
 
 # timers
 

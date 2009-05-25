@@ -6,8 +6,9 @@
 package IO::Async::Loop::Epoll;
 
 use strict;
+use warnings;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use base qw( IO::Async::Loop );
 
@@ -102,7 +103,7 @@ sub DESTROY
    my $self = shift;
 
    foreach my $signal ( keys %{ $self->{restore_SIG} } ) {
-      $self->detach_signal( $signal );
+      $self->unwatch_signal( $signal );
    }
 }
 

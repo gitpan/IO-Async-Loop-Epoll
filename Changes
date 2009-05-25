@@ -1,5 +1,11 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.05    CHANGES:
+         * Added 'use warnings'
+
+        BUGFIXES:
+         * Don't rely on writability of STDOUT during test scripts
+
 0.04    CHANGES:
          * Updated for IO-Async 0.20
 

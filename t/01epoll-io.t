@@ -2,10 +2,8 @@
 
 use strict;
 
-use Test::More tests => 10;
+use Test::More tests => 9;
 use Test::Exception;
-
-use IO::Async::Notifier;
 
 use IO::Async::Loop::Epoll;
 
@@ -21,14 +19,11 @@ $S1->blocking( 0 );
 $S2->blocking( 0 );
 
 my $readready = 0;
-my $writeready = 0;
 
-my $notifier = IO::Async::Notifier->new( handle => $S1,
+$loop->watch_io(
+   handle => $S1,
    on_read_ready  => sub { $readready = 1 },
-   on_write_ready => sub { $writeready = 1 },
 );
-
-$loop->add( $notifier );
 
 $S2->syswrite( "data\n" );
 
@@ -44,7 +39,13 @@ is( $readready, 1, '$readready after loop_once' );
 $S1->getline(); # ignore return
 
 # Write-ready
-$notifier->want_writeready( 1 );
+
+my $writeready = 0;
+
+$loop->watch_io(
+   handle => $S1,
+   on_write_ready => sub { $writeready = 1 },
+);
 
 $loop->loop_once( 0.1 );
 
@@ -52,12 +53,10 @@ is( $writeready, 1, '$writeready after loop_once' );
 
 # loop_forever
 
-my $stdout_notifier = IO::Async::Notifier->new( handle => \*STDOUT,
-   on_read_ready => sub { },
+$loop->watch_io(
+   handle => $S2,
    on_write_ready => sub { $loop->loop_stop() },
-   want_writeready => 1,
 );
-$loop->add( $stdout_notifier );
 
 $writeready = 0;
 
@@ -70,11 +69,12 @@ alarm( 0 );
 
 is( $writeready, 1, '$writeready after loop_forever' );
 
-$loop->remove( $stdout_notifier );
+$loop->unwatch_io(
+   handle => $S2,
+   on_write_ready => 1,
+);
 
-$notifier->want_writeready( 0 );
 $readready = 0;
-
 $loop->loop_once( 0.1 );
 
 is( $readready, 0, '$readready before HUP' );
@@ -86,27 +86,25 @@ $loop->loop_once( 0.1 );
 
 is( $readready, 1, '$readready after HUP' );
 
-$loop->remove( $notifier );
-
-is( $notifier->get_loop, undef, '$notifier->__memberof_set is undef' );
+$loop->unwatch_io(
+   handle => $S1,
+   on_read_ready => 1,
+);
 
 # HUP of pipe
 
 my ( $P1, $P2 ) = $loop->pipepair() or die "Cannot pipepair - $!";
-my ( $N1, $N2 ) = map {
-   IO::Async::Notifier->new( read_handle => $_,
-      on_read_ready   => sub { $readready = 1; },
-      want_writeready => 0,
-   ) } ( $P1, $P2 );
 
-$loop->add( $N1 );
+$loop->watch_io(
+   handle => $P1,
+   on_read_ready => sub { $readready = 1 },
+);
 
 $readready = 0;
 $loop->loop_once( 0.1 );
 
 is( $readready, 0, '$readready before pipe HUP' );
 
-undef $N2;
 close( $P2 );
 
 $readready = 0;
@@ -114,4 +112,7 @@ $loop->loop_once( 0.1 );
 
 is( $readready, 1, '$readready after pipe HUP' );
 
-$loop->remove( $N1 );
+$loop->unwatch_io(
+   handle => $P1,
+   on_read_ready => 1,
+);
