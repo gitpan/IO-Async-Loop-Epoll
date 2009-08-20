@@ -1,9 +1,9 @@
 ---
 name: IO-Async-Loop-Epoll
-version: 0.05
+version: 0.06
 author:
-  - 'Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>'
-abstract: a Loop using an C<IO::Epoll> object
+  - 'Paul Evans <leonerd@leonerd.org.uk>'
+abstract: use C<IO::Async> with C<epoll> on Linux
 license: perl
 resources:
   license: http://dev.perl.org/licenses/
@@ -18,7 +18,7 @@ build_requires:
 provides:
   IO::Async::Loop::Epoll:
     file: lib/IO/Async/Loop/Epoll.pm
-    version: 0.05
+    version: 0.06
 generated_by: Module::Build version 0.33
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html

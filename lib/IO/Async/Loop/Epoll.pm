@@ -8,7 +8,7 @@ package IO::Async::Loop::Epoll;
 use strict;
 use warnings;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 use base qw( IO::Async::Loop );
 
@@ -24,7 +24,7 @@ use POSIX qw( EINTR SIG_BLOCK SIG_UNBLOCK sigprocmask );
 
 =head1 NAME
 
-L<IO::Async::Loop::Epoll> - a Loop using an C<IO::Epoll> object
+L<IO::Async::Loop::Epoll> - use C<IO::Async> with C<epoll> on Linux
 
 =head1 SYNOPSIS
 
@@ -275,4 +275,4 @@ L<IO::Async::Loop::IO_Poll> - a Loop using an IO::Poll object
 
 =head1 AUTHOR
 
-Paul Evans E<lt>leonerd@leonerd.org.ukE<gt>
+Paul Evans <leonerd@leonerd.org.uk>

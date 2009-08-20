@@ -1,5 +1,8 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.06    CHANGES:
+         * Various small updates to keep CPANTS happy
+
 0.05    CHANGES:
          * Added 'use warnings'
 
