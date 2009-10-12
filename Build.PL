@@ -7,14 +7,12 @@ my $build = Module::Build->new
   (
    module_name => 'IO::Async::Loop::Epoll',
    requires => {
-                 'IO::Async'    => '0.20',
-                 'IO::Epoll'    => 0.02,
+                 'IO::Async' => '0.24',
+                 'IO::Epoll' => 0.02,
                },
    build_requires => {
                  'Test::More' => 0,
-                 'Test::Exception' => 0,
-                 'Test::Refcount' => 0,
-                 'Time::HiRes' => 0,
+                 'IO::Async::LoopTests' => '0.24',
                },
    license => 'perl',
    create_makefile_pl => 'traditional',

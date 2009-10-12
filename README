@@ -9,7 +9,7 @@ SYNOPSIS
      $loop->add( ... );
 
      $loop->add( IO::Async::Signal->new(
-           name =< 'HUP',
+           name => 'HUP',
            on_receipt => sub { ... },
      ) );
 
@@ -54,7 +54,7 @@ METHODS
 SEE ALSO
     *   IO::Epoll - Scalable IO Multiplexing for Linux 2.5.44 and higher
 
-    *   IO::Async::Loop::IO_Poll - a Loop using an IO::Poll object
+    *   IO::Async::Loop::Poll - use IO::Async with poll(2)
 
 AUTHOR
     Paul Evans <leonerd@leonerd.org.uk>

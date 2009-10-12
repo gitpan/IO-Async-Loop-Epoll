@@ -8,7 +8,8 @@ package IO::Async::Loop::Epoll;
 use strict;
 use warnings;
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
+use constant API_VERSION => '0.24';
 
 use base qw( IO::Async::Loop );
 
@@ -35,7 +36,7 @@ L<IO::Async::Loop::Epoll> - use C<IO::Async> with C<epoll> on Linux
  $loop->add( ... );
 
  $loop->add( IO::Async::Signal->new(
-       name =< 'HUP',
+       name => 'HUP',
        on_receipt => sub { ... },
  ) );
 
@@ -151,8 +152,7 @@ sub loop_once
       }
    }
 
-   my $timequeue = $self->{timequeue};
-   $count += $timequeue->fire if $timequeue;
+   $count += $self->_manage_queues;
 
    return $count;
 }
@@ -269,7 +269,7 @@ L<IO::Epoll> - Scalable IO Multiplexing for Linux 2.5.44 and higher
 
 =item *
 
-L<IO::Async::Loop::IO_Poll> - a Loop using an IO::Poll object 
+L<IO::Async::Loop::Poll> - use IO::Async with poll(2)
 
 =back
 
