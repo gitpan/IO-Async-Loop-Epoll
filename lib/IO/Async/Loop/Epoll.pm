@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008,2009 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2010 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Epoll;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 use constant API_VERSION => '0.24';
 
 use base qw( IO::Async::Loop );
@@ -18,7 +18,7 @@ use Carp;
 use IO::Epoll qw(
    epoll_create epoll_ctl epoll_pwait 
    EPOLL_CTL_ADD EPOLL_CTL_MOD EPOLL_CTL_DEL
-   EPOLLIN EPOLLOUT EPOLLHUP
+   EPOLLIN EPOLLOUT EPOLLHUP EPOLLERR
 );
 
 use POSIX qw( EINTR SIG_BLOCK SIG_UNBLOCK sigprocmask );
@@ -31,13 +31,27 @@ L<IO::Async::Loop::Epoll> - use C<IO::Async> with C<epoll> on Linux
 
  use IO::Async::Loop::Epoll;
 
+ use IO::Async::Stream;
+ use IO::Async::Signal;
+
  my $loop = IO::Async::Loop::Epoll->new();
 
- $loop->add( ... );
+ $loop->add( IO::Async::Stream->new(
+       read_handle => \*STDIN,
+       on_read => sub {
+          my ( $self, $buffref ) = @_;
+          while( $$buffref =~ s/^(.*)\r?\n// ) {
+             print "You said: $1\n";
+          }
+       },
+ ) );
 
  $loop->add( IO::Async::Signal->new(
-       name => 'HUP',
-       on_receipt => sub { ... },
+       name => 'INT',
+       on_receipt => sub {
+          print "SIGINT, will now quit\n";
+          $loop->loop_stop;
+       },
  ) );
 
  $loop->loop_forever();
@@ -141,7 +155,7 @@ sub loop_once
 
       my $watch = $iowatches->{$fd};
 
-      if( $bits & (EPOLLIN|EPOLLHUP) ) {
+      if( $bits & (EPOLLIN|EPOLLHUP|EPOLLERR) ) {
          $watch->[1]->() if $watch->[1];
          $count++;
       }

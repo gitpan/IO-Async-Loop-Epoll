@@ -1,5 +1,6 @@
 Build.PL
 Changes
+examples/synopsis.pl
 lib/IO/Async/Loop/Epoll.pm
 LICENSE
 Makefile.PL
