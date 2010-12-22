@@ -8,8 +8,8 @@ package IO::Async::Loop::Epoll;
 use strict;
 use warnings;
 
-our $VERSION = '0.08';
-use constant API_VERSION => '0.24';
+our $VERSION = '0.09';
+use constant API_VERSION => '0.33';
 
 use base qw( IO::Async::Loop );
 

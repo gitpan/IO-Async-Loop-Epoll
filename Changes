@@ -1,5 +1,8 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.09    CHANGES:
+         * Updated API version for IO::Async 0.33
+
 0.08    CHANGES:
          * Full example in SYNOPSIS section
 
