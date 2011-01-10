@@ -1,5 +1,9 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.10    BUGFIXES:
+         * Try to workaround perl blobk/unblock signals bug by using an unsafe
+           POSIX::SigAction handler
+
 0.09    CHANGES:
          * Updated API version for IO::Async 0.33
 
