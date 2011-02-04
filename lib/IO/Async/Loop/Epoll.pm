@@ -8,8 +8,9 @@ package IO::Async::Loop::Epoll;
 use strict;
 use warnings;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 use constant API_VERSION => '0.33';
+use constant _CAN_ON_HANGUP => 1;
 
 use base qw( IO::Async::Loop );
 
@@ -21,7 +22,7 @@ use IO::Epoll qw(
    EPOLLIN EPOLLOUT EPOLLHUP EPOLLERR
 );
 
-use POSIX qw( EINTR SIG_BLOCK SIG_UNBLOCK sigprocmask sigaction );
+use POSIX qw( EINTR EPERM SIG_BLOCK SIG_UNBLOCK sigprocmask sigaction );
 
 =head1 NAME
 
@@ -99,6 +100,9 @@ sub new
 
    $self->{epoll} = $epoll;
    $self->{sigmask} = POSIX::SigSet->new();
+   $self->{maxevents} = 8;
+
+   $self->{fakeevents} = {};
 
    $self->{signals} = {};
 
@@ -141,14 +145,18 @@ sub loop_once
 
    my $msec = defined $timeout ? $timeout * 1000 : -1;
 
-   my $ret = epoll_pwait( $self->{epoll}, 20, $msec, $self->{sigmask} );
+   my $ret = epoll_pwait( $self->{epoll}, $self->{maxevents}, $msec, $self->{sigmask} );
 
    return undef if !$ret and $! != EINTR;
 
    my $count = 0;
 
    my $iowatches = $self->{iowatches};
-   foreach my $ev ( @$ret ) {
+
+   my $fakeevents = $self->{fakeevents};
+   my @fakeevents = map { [ $_ => $fakeevents->{$_} ] } keys %$fakeevents;
+
+   foreach my $ev ( @$ret, @fakeevents ) {
       my ( $fd, $bits ) = @$ev;
 
       my $watch = $iowatches->{$fd};
@@ -160,6 +168,11 @@ sub loop_once
 
       if( $bits & (EPOLLOUT|EPOLLHUP) ) {
          $watch->[2]->() if $watch->[2];
+         $count++;
+      }
+
+      if( $bits & EPOLLHUP ) {
+         $watch->[3]->() if $watch->[3];
          $count++;
       }
    }
@@ -175,10 +188,13 @@ sub loop_once
 
    $count += $self->_manage_queues;
 
+   # If we entirely filled the event buffer this time, we may have missed some
+   # Lets get a bigger buffer next time
+   $self->{maxevents} *= 2 if @$ret == $self->{maxevents};
+
    return $count;
 }
 
-# override
 sub watch_io
 {
    my $self = shift;
@@ -196,17 +212,36 @@ sub watch_io
    my $mask = $curmask;
    $params{on_read_ready}  and $mask |= EPOLLIN;
    $params{on_write_ready} and $mask |= EPOLLOUT;
+   $params{on_hangup}      and $mask |= EPOLLHUP;
+
+   my $fakeevents = $self->{fakeevents};
 
    if( !$curmask ) {
-      epoll_ctl( $epoll, EPOLL_CTL_ADD, $fd, $mask ) == 0
-         or carp "Cannot EPOLL_CTL_ADD($fd,$mask) - $!";
+      if( epoll_ctl( $epoll, EPOLL_CTL_ADD, $fd, $mask ) == 0 ) {
+         # All OK
+      }
+      elsif( $! == EPERM ) {
+         # The filehandle isn't epoll'able. This means kernel thinks it should
+         # always be ready.
+         $fakeevents->{$fd} = $mask;
+      }
+      else {
+         croak "Cannot EPOLL_CTL_ADD($fd,$mask) - $!";
+      }
+
+      $self->{masks}->{$fd} = $mask;
    }
    elsif( $mask != $curmask ) {
-      epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
-         or carp "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
-   }
+      if( exists $fakeevents->{$fd} ) {
+         $fakeevents->{$fd} = $mask;
+      }
+      else {
+         epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
+            or croak "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
+      }
 
-   $self->{masks}->{$fd} = $mask;
+      $self->{masks}->{$fd} = $mask;
+   }
 }
 
 sub unwatch_io
@@ -226,15 +261,30 @@ sub unwatch_io
    my $mask = $curmask;
    $params{on_read_ready}  and $mask &= ~EPOLLIN;
    $params{on_write_ready} and $mask &= ~EPOLLOUT;
+   $params{on_hangup}      and $mask &= ~EPOLLHUP;
+
+   my $fakeevents = $self->{fakeevents};
 
    if( $mask ) {
-      epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
-         or carp "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
+      if( exists $fakeevents->{$fd} ) {
+         $fakeevents->{$fd} = $mask;
+      }
+      else {
+         epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
+            or croak "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
+      }
+
       $self->{masks}->{$fd} = $mask;
    }
    else {
-      epoll_ctl( $epoll, EPOLL_CTL_DEL, $fd, 0 ) == 0
-         or carp "Cannot EPOLL_CTL_DEL($fd) - $!";
+      if( exists $fakeevents->{$fd} ) {
+         delete $fakeevents->{$fd};
+      }
+      else {
+         epoll_ctl( $epoll, EPOLL_CTL_DEL, $fd, 0 ) == 0
+            or croak "Cannot EPOLL_CTL_DEL($fd) - $!";
+      }
+
       delete $self->{masks}->{$fd};
    }
 }
