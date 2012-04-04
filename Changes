@@ -1,5 +1,12 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.12    BUGFIXES:
+         * Only declare known support for on_hangup on Linux just on the
+           offchance that some non-Linux OS ever gains epoll
+         * Fix timing-related bugs by rounding epoll_pwait() timeout up to the
+           next milisecond (RT73498)
+         * on_hangup also needs to test for EPOLLERR condition
+
 0.11    CHANGES:
          * Dynamically scale epoll_pwait() maxevents parameter to avoid
            stalling higher-numbered FDs during high load

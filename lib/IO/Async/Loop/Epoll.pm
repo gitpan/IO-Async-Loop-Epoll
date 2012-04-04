@@ -1,16 +1,21 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008-2011 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2012 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Epoll;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 use constant API_VERSION => '0.33';
-use constant _CAN_ON_HANGUP => 1;
+
+# Only Linux is known always to be able to report EOF conditions on
+# filehandles using EPOLLHUP
+# This is probably redundant as epoll is probably Linux-only also, but it
+# doesn't harm anything to test specially.
+use constant _CAN_ON_HANGUP => ( $^O eq "linux" );
 
 use base qw( IO::Async::Loop );
 
@@ -22,7 +27,7 @@ use IO::Epoll qw(
    EPOLLIN EPOLLOUT EPOLLHUP EPOLLERR
 );
 
-use POSIX qw( EINTR EPERM SIG_BLOCK SIG_UNBLOCK sigprocmask sigaction );
+use POSIX qw( EINTR EPERM SIG_BLOCK SIG_UNBLOCK sigprocmask sigaction ceil );
 
 =head1 NAME
 
@@ -59,12 +64,12 @@ L<IO::Async::Loop::Epoll> - use C<IO::Async> with C<epoll> on Linux
 
 =head1 DESCRIPTION
 
-This subclass of C<IO::Async::Loop> uses C<IO::Epoll> to perform read-ready
+This subclass of L<IO::Async::Loop> uses L<IO::Epoll> to perform read-ready
 and write-ready tests so that the OZ<>(1) high-performance multiplexing of
 Linux's C<epoll_pwait(2)> syscall can be used.
 
 The C<epoll> Linux subsystem uses a registration system similar to the higher
-level C<IO::Poll> object wrapper, meaning that better performance can be
+level L<IO::Poll> object wrapper, meaning that better performance can be
 achieved in programs using a large number of filehandles. Each
 C<epoll_pwait(2)> syscall only has an overhead proportional to the number of
 ready filehandles, rather than the total number being watched. For more
@@ -143,7 +148,8 @@ sub loop_once
 
    $self->_adjust_timeout( \$timeout );
 
-   my $msec = defined $timeout ? $timeout * 1000 : -1;
+   # Round up to next milisecond to avoid zero timeouts
+   my $msec = defined $timeout ? ceil( $timeout * 1000 ) : -1;
 
    my $ret = epoll_pwait( $self->{epoll}, $self->{maxevents}, $msec, $self->{sigmask} );
 
@@ -171,7 +177,7 @@ sub loop_once
          $count++;
       }
 
-      if( $bits & EPOLLHUP ) {
+      if( $bits & (EPOLLHUP|EPOLLERR) ) {
          $watch->[3]->() if $watch->[3];
          $count++;
       }
@@ -333,11 +339,6 @@ sub unwatch_signal
    sigprocmask( SIG_UNBLOCK, POSIX::SigSet->new( $signum ) );
 }
 
-# Keep perl happy; keep Britain tidy
-1;
-
-__END__
-
 =head1 SEE ALSO
 
 =over 4
@@ -355,3 +356,7 @@ L<IO::Async::Loop::Poll> - use IO::Async with poll(2)
 =head1 AUTHOR
 
 Paul Evans <leonerd@leonerd.org.uk>
+
+=cut
+
+0x55AA;
