@@ -8,8 +8,8 @@ package IO::Async::Loop::Epoll;
 use strict;
 use warnings;
 
-our $VERSION = '0.12';
-use constant API_VERSION => '0.33';
+our $VERSION = '0.13';
+use constant API_VERSION => '0.49';
 
 # Only Linux is known always to be able to report EOF conditions on
 # filehandles using EPOLLHUP
@@ -21,11 +21,7 @@ use base qw( IO::Async::Loop );
 
 use Carp;
 
-use IO::Epoll qw(
-   epoll_create epoll_ctl epoll_pwait 
-   EPOLL_CTL_ADD EPOLL_CTL_MOD EPOLL_CTL_DEL
-   EPOLLIN EPOLLOUT EPOLLHUP EPOLLERR
-);
+use Linux::Epoll 0.005;
 
 use POSIX qw( EINTR EPERM SIG_BLOCK SIG_UNBLOCK sigprocmask sigaction ceil );
 
@@ -64,16 +60,15 @@ L<IO::Async::Loop::Epoll> - use C<IO::Async> with C<epoll> on Linux
 
 =head1 DESCRIPTION
 
-This subclass of L<IO::Async::Loop> uses L<IO::Epoll> to perform read-ready
-and write-ready tests so that the OZ<>(1) high-performance multiplexing of
-Linux's C<epoll_pwait(2)> syscall can be used.
+This subclass of L<IO::Async::Loop> uses C<epoll(7)> on Linux to perform
+read-ready and write-ready tests so that the OZ<>(1) high-performance
+multiplexing of Linux's C<epoll_pwait(2)> syscall can be used.
 
-The C<epoll> Linux subsystem uses a registration system similar to the higher
-level L<IO::Poll> object wrapper, meaning that better performance can be
-achieved in programs using a large number of filehandles. Each
-C<epoll_pwait(2)> syscall only has an overhead proportional to the number of
-ready filehandles, rather than the total number being watched. For more
-detail, see the C<epoll(7)> manpage.
+The C<epoll> Linux subsystem uses a persistant registration system, meaning
+that better performance can be achieved in programs using a large number of
+filehandles. Each C<epoll_pwait(2)> syscall only has an overhead proportional
+to the number of ready filehandles, rather than the total number being
+watched. For more detail, see the C<epoll(7)> manpage.
 
 This class uses the C<epoll_pwait(2)> system call, which atomically switches
 the process's signal mask, performs a wait exactly as C<epoll_wait(2)> would,
@@ -98,7 +93,7 @@ sub new
    my $class = shift;
    my ( %args ) = @_;
 
-   my $epoll = epoll_create(10); # Just made up 10. Kernel will readjust
+   my $epoll = Linux::Epoll->new;
    defined $epoll or croak "Cannot create epoll handle - $!";
 
    my $self = $class->SUPER::__new( %args );
@@ -110,9 +105,17 @@ sub new
    $self->{fakeevents} = {};
 
    $self->{signals} = {};
+   $self->{masks} = {};
 
    return $self;
 }
+
+# Some bits to keep track of in {masks}
+use constant {
+    WATCH_READ  => 0x01,
+    WATCH_WRITE => 0x02,
+    WATCH_HUP   => 0x04,
+};
 
 =head1 METHODS
 
@@ -133,8 +136,7 @@ sub DESTROY
 
 =head2 $count = $loop->loop_once( $timeout )
 
-This method calls the C<poll()> method on the stored C<IO::Epoll> object,
-passing in the value of C<$timeout>, and processes the results of that call.
+This method calls C<epoll_pwait(2)>, and processes the results of that call.
 It returns the total number of C<IO::Async::Notifier> callbacks invoked, or
 C<undef> if the underlying C<epoll_pwait()> method returned an error. If the
 C<epoll_pwait()> was interrupted by a signal, then 0 is returned instead.
@@ -151,33 +153,33 @@ sub loop_once
    # Round up to next milisecond to avoid zero timeouts
    my $msec = defined $timeout ? ceil( $timeout * 1000 ) : -1;
 
-   my $ret = epoll_pwait( $self->{epoll}, $self->{maxevents}, $msec, $self->{sigmask} );
+   my $ret = $self->{epoll}->wait( $self->{maxevents}, $msec / 1000, $self->{sigmask} );
 
-   return undef if !$ret and $! != EINTR;
+   return undef if !defined $ret and $! != EINTR;
 
-   my $count = 0;
+   my $count = $ret || 0;
 
    my $iowatches = $self->{iowatches};
 
    my $fakeevents = $self->{fakeevents};
    my @fakeevents = map { [ $_ => $fakeevents->{$_} ] } keys %$fakeevents;
 
-   foreach my $ev ( @$ret, @fakeevents ) {
+   foreach my $ev ( @fakeevents ) {
       my ( $fd, $bits ) = @$ev;
 
       my $watch = $iowatches->{$fd};
 
-      if( $bits & (EPOLLIN|EPOLLHUP|EPOLLERR) ) {
+      if( $bits & WATCH_READ ) {
          $watch->[1]->() if $watch->[1];
          $count++;
       }
 
-      if( $bits & (EPOLLOUT|EPOLLHUP) ) {
+      if( $bits & WATCH_WRITE ) {
          $watch->[2]->() if $watch->[2];
          $count++;
       }
 
-      if( $bits & (EPOLLHUP|EPOLLERR) ) {
+      if( $bits & WATCH_HUP ) {
          $watch->[3]->() if $watch->[3];
          $count++;
       }
@@ -196,7 +198,7 @@ sub loop_once
 
    # If we entirely filled the event buffer this time, we may have missed some
    # Lets get a bigger buffer next time
-   $self->{maxevents} *= 2 if @$ret == $self->{maxevents};
+   $self->{maxevents} *= 2 if defined $ret and $ret == $self->{maxevents};
 
    return $count;
 }
@@ -213,17 +215,39 @@ sub watch_io
    my $handle = $params{handle};
    my $fd = $handle->fileno;
 
+   my $watch = $self->{iowatches}->{$fd};
+
    my $curmask = $self->{masks}->{$fd} || 0;
+   my $cb      = $self->{callbacks}->{$fd} ||= sub {
+      my ( $events ) = @_;
+
+      if( $events->{in} or $events->{hup} or $events->{err} ) {
+         $watch->[1]->() if $watch->[1];
+      }
+
+      if( $events->{out} or $events->{hup} or $events->{err} ) {
+         $watch->[2]->() if $watch->[2];
+      }
+
+      if( $events->{hup} or $events->{err} ) {
+         $watch->[3]->() if $watch->[3];
+      }
+   };
 
    my $mask = $curmask;
-   $params{on_read_ready}  and $mask |= EPOLLIN;
-   $params{on_write_ready} and $mask |= EPOLLOUT;
-   $params{on_hangup}      and $mask |= EPOLLHUP;
+   $params{on_read_ready}  and $mask |= WATCH_READ;
+   $params{on_write_ready} and $mask |= WATCH_WRITE;
+   $params{on_hangup}      and $mask |= WATCH_HUP;
+
+   my @bits;
+   push @bits, 'in'  if $mask & WATCH_READ;
+   push @bits, 'out' if $mask & WATCH_WRITE;
+   push @bits, 'hup' if $mask & WATCH_HUP;
 
    my $fakeevents = $self->{fakeevents};
 
    if( !$curmask ) {
-      if( epoll_ctl( $epoll, EPOLL_CTL_ADD, $fd, $mask ) == 0 ) {
+      if( eval { $epoll->add( $handle, \@bits, $cb ); 1 } ) {
          # All OK
       }
       elsif( $! == EPERM ) {
@@ -242,7 +266,7 @@ sub watch_io
          $fakeevents->{$fd} = $mask;
       }
       else {
-         epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
+         $epoll->modify( $handle, \@bits, $cb ) == 0
             or croak "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
       }
 
@@ -263,11 +287,12 @@ sub unwatch_io
    my $fd = $handle->fileno;
 
    my $curmask = $self->{masks}->{$fd} or return;
+   my $cb      = $self->{callbacks}->{$fd} or return;
 
    my $mask = $curmask;
-   $params{on_read_ready}  and $mask &= ~EPOLLIN;
-   $params{on_write_ready} and $mask &= ~EPOLLOUT;
-   $params{on_hangup}      and $mask &= ~EPOLLHUP;
+   $params{on_read_ready}  and $mask &= ~WATCH_READ;
+   $params{on_write_ready} and $mask &= ~WATCH_WRITE;
+   $params{on_hangup}      and $mask &= ~WATCH_HUP;
 
    my $fakeevents = $self->{fakeevents};
 
@@ -276,7 +301,12 @@ sub unwatch_io
          $fakeevents->{$fd} = $mask;
       }
       else {
-         epoll_ctl( $epoll, EPOLL_CTL_MOD, $fd, $mask ) == 0
+         my @bits;
+         push @bits, 'in'  if $mask & WATCH_READ;
+         push @bits, 'out' if $mask & WATCH_WRITE;
+         push @bits, 'hup' if $mask & WATCH_HUP;
+
+         $epoll->modify( $handle, \@bits, $cb ) == 0
             or croak "Cannot EPOLL_CTL_MOD($fd,$mask) - $!";
       }
 
@@ -287,7 +317,7 @@ sub unwatch_io
          delete $fakeevents->{$fd};
       }
       else {
-         epoll_ctl( $epoll, EPOLL_CTL_DEL, $fd, 0 ) == 0
+         $epoll->delete( $handle ) == 0
             or croak "Cannot EPOLL_CTL_DEL($fd) - $!";
       }
 
@@ -295,7 +325,6 @@ sub unwatch_io
    }
 }
 
-# override
 sub watch_signal
 {
    my $self = shift;
@@ -320,7 +349,6 @@ sub watch_signal
    sigaction( $signum, $sigaction ) or croak "Unable to sigaction - $!";
 }
 
-# override
 sub unwatch_signal
 {
    my $self = shift;
@@ -345,7 +373,7 @@ sub unwatch_signal
 
 =item *
 
-L<IO::Epoll> - Scalable IO Multiplexing for Linux 2.5.44 and higher
+L<Linux::Epoll> - O(1) multiplexing for Linux
 
 =item *
 

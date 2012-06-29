@@ -30,16 +30,16 @@ SYNOPSIS
      $loop->loop_forever();
 
 DESCRIPTION
-    This subclass of IO::Async::Loop uses IO::Epoll to perform read-ready
-    and write-ready tests so that the O(1) high-performance multiplexing of
-    Linux's `epoll_pwait(2)' syscall can be used.
+    This subclass of IO::Async::Loop uses `epoll(7)' on Linux to perform
+    read-ready and write-ready tests so that the O(1) high-performance
+    multiplexing of Linux's `epoll_pwait(2)' syscall can be used.
 
-    The `epoll' Linux subsystem uses a registration system similar to the
-    higher level IO::Poll object wrapper, meaning that better performance
-    can be achieved in programs using a large number of filehandles. Each
-    `epoll_pwait(2)' syscall only has an overhead proportional to the number
-    of ready filehandles, rather than the total number being watched. For
-    more detail, see the `epoll(7)' manpage.
+    The `epoll' Linux subsystem uses a persistant registration system,
+    meaning that better performance can be achieved in programs using a
+    large number of filehandles. Each `epoll_pwait(2)' syscall only has an
+    overhead proportional to the number of ready filehandles, rather than
+    the total number being watched. For more detail, see the `epoll(7)'
+    manpage.
 
     This class uses the `epoll_pwait(2)' system call, which atomically
     switches the process's signal mask, performs a wait exactly as
@@ -58,15 +58,14 @@ METHODS
     identically to `IO::Async::Loop'.
 
   $count = $loop->loop_once( $timeout )
-    This method calls the `poll()' method on the stored `IO::Epoll' object,
-    passing in the value of `$timeout', and processes the results of that
+    This method calls `epoll_pwait(2)', and processes the results of that
     call. It returns the total number of `IO::Async::Notifier' callbacks
     invoked, or `undef' if the underlying `epoll_pwait()' method returned an
     error. If the `epoll_pwait()' was interrupted by a signal, then 0 is
     returned instead.
 
 SEE ALSO
-    *   IO::Epoll - Scalable IO Multiplexing for Linux 2.5.44 and higher
+    *   Linux::Epoll - O(1) multiplexing for Linux
 
     *   IO::Async::Loop::Poll - use IO::Async with poll(2)
 

@@ -7,7 +7,7 @@ my $build = Module::Build->new(
    module_name => 'IO::Async::Loop::Epoll',
    requires => {
       'IO::Async' => '0.24',
-      'IO::Epoll' => 0.02,
+      'Linux::Epoll' => '0.005',
    },
    build_requires => {
       'Test::More' => 0,

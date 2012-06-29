@@ -7,7 +7,7 @@ WriteMakefile
   'PREREQ_PM' => {
                    'IO::Async' => '0.24',
                    'IO::Async::LoopTests' => '0.24',
-                   'IO::Epoll' => '0.02',
+                   'Linux::Epoll' => '0.005',
                    'Test::More' => 0
                  },
   'INSTALLDIRS' => 'site',

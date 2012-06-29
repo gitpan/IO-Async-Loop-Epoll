@@ -1,5 +1,9 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.13    CHANGES:
+         * Rewrite to use Linux::Epoll instead, which has nicer scaling than
+           IO::Epoll
+
 0.12    BUGFIXES:
          * Only declare known support for on_hangup on Linux just on the
            offchance that some non-Linux OS ever gains epoll
