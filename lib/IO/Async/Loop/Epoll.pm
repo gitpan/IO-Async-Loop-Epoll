@@ -8,7 +8,7 @@ package IO::Async::Loop::Epoll;
 use strict;
 use warnings;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 use constant API_VERSION => '0.49';
 
 # Only Linux is known always to be able to report EOF conditions on
@@ -27,7 +27,7 @@ use POSIX qw( EINTR EPERM SIG_BLOCK SIG_UNBLOCK sigprocmask sigaction ceil );
 
 =head1 NAME
 
-L<IO::Async::Loop::Epoll> - use C<IO::Async> with C<epoll> on Linux
+C<IO::Async::Loop::Epoll> - use C<IO::Async> with C<epoll> on Linux
 
 =head1 SYNOPSIS
 
@@ -322,6 +322,7 @@ sub unwatch_io
       }
 
       delete $self->{masks}->{$fd};
+      delete $self->{callbacks}->{$fd};
    }
 }
 

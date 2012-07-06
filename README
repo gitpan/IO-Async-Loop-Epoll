@@ -1,5 +1,5 @@
 NAME
-    IO::Async::Loop::Epoll - use `IO::Async' with `epoll' on Linux
+    `IO::Async::Loop::Epoll' - use `IO::Async' with `epoll' on Linux
 
 SYNOPSIS
      use IO::Async::Loop::Epoll;
