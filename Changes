@@ -1,5 +1,8 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.15    BUGFIXES:
+         * Add support for IO_ASYNC_WATCHDOG
+
 0.14    BUGFIXES:
          * Fix for unwatch/rewatch IO case (RT78175)
 

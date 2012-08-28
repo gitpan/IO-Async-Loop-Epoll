@@ -8,7 +8,7 @@ package IO::Async::Loop::Epoll;
 use strict;
 use warnings;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 use constant API_VERSION => '0.49';
 
 # Only Linux is known always to be able to report EOF conditions on
@@ -24,6 +24,9 @@ use Carp;
 use Linux::Epoll 0.005;
 
 use POSIX qw( EINTR EPERM SIG_BLOCK SIG_UNBLOCK sigprocmask sigaction ceil );
+
+use constant _CAN_WATCHDOG => 1;
+use constant WATCHDOG_ENABLE => IO::Async::Loop->WATCHDOG_ENABLE;
 
 =head1 NAME
 
@@ -159,6 +162,11 @@ sub loop_once
 
    my $count = $ret || 0;
 
+   if( WATCHDOG_ENABLE and !$self->{alarmed} ) {
+      alarm( IO::Async::Loop->WATCHDOG_INTERVAL );
+      $self->{alarmed}++;
+   }
+
    my $iowatches = $self->{iowatches};
 
    my $fakeevents = $self->{fakeevents};
@@ -200,6 +208,8 @@ sub loop_once
    # Lets get a bigger buffer next time
    $self->{maxevents} *= 2 if defined $ret and $ret == $self->{maxevents};
 
+   alarm( 0 ), undef $self->{alarmed} if WATCHDOG_ENABLE;
+
    return $count;
 }
 
@@ -217,9 +227,16 @@ sub watch_io
 
    my $watch = $self->{iowatches}->{$fd};
 
+   my $alarmed = \$self->{alarmed};
+
    my $curmask = $self->{masks}->{$fd} || 0;
    my $cb      = $self->{callbacks}->{$fd} ||= sub {
       my ( $events ) = @_;
+
+      if( WATCHDOG_ENABLE and !$$alarmed ) {
+         alarm( IO::Async::Loop->WATCHDOG_INTERVAL );
+         $$alarmed = 1;
+      }
 
       if( $events->{in} or $events->{hup} or $events->{err} ) {
          $watch->[1]->() if $watch->[1];
