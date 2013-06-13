@@ -1,5 +1,8 @@
 Revision history for IO-Async-Loop-Epoll
 
+0.16    BUGFIXES:
+         * Remmeber to set zero timeout when there are fakeevents to use
+
 0.15    BUGFIXES:
          * Add support for IO_ASYNC_WATCHDOG
 

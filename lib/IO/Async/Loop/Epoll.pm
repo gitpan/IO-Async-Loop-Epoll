@@ -1,14 +1,14 @@
 #  You may distribute under the terms of either the GNU General Public License
 #  or the Artistic License (the same terms as Perl itself)
 #
-#  (C) Paul Evans, 2008-2012 -- leonerd@leonerd.org.uk
+#  (C) Paul Evans, 2008-2013 -- leonerd@leonerd.org.uk
 
 package IO::Async::Loop::Epoll;
 
 use strict;
 use warnings;
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 use constant API_VERSION => '0.49';
 
 # Only Linux is known always to be able to report EOF conditions on
@@ -155,6 +155,8 @@ sub loop_once
 
    # Round up to next milisecond to avoid zero timeouts
    my $msec = defined $timeout ? ceil( $timeout * 1000 ) : -1;
+
+   $timeout = 0 if keys %{ $self->{fakeevents} };
 
    my $ret = $self->{epoll}->wait( $self->{maxevents}, $msec / 1000, $self->{sigmask} );
 
